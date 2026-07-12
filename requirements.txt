@@ -1,0 +1,8 @@
+streamlit
+pandas
+numpy
+plotly
+pypsa
+entsoe-py
+geopy
+requests
