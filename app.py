@@ -8,8 +8,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pypsa
 from entsoe import EntsoePandasClient
-from geopy.geocoders import Nominatim
-from geopy.extra.rate_limiter import RateLimiter
 from datetime import datetime, timedelta
 import streamlit as st
 
@@ -32,18 +30,23 @@ def clean_german_num(val):
     except: return 0.0
 
 translation = {
-    "Solare Strahlungsenergie": "Solar", "Windenergie (Onshore-Anlage)": "Wind Onshore",
-    "Windenergie (Offshore-Anlage)": "Wind Offshore", "Wasserkraft": "Hydro",
+    "Solare Strahlungsenergie": "Solar", "SolareStrahlungsenergie": "Solar",
+    "Windenergie (Onshore-Anlage)": "Wind Onshore", "Wind (onshore)": "Wind Onshore",
+    "Windenergie (Offshore-Anlage)": "Wind Offshore", "Wind (offshore)": "Wind Offshore",
+    "Wasserkraft": "Hydro", "Wasser": "Hydro",
     "Erdgas": "Gas", "Braunkohle": "Lignite", "Steinkohle": "Hard Coal",
-    "Biomasse": "Biomass", "Speicher": "Battery", "Pumpspeicher": "Pumped Hydro",
-    "Kernenergie": "Nuclear", "Kernkraft": "Nuclear", "Öl": "Oil"
+    "Biomasse": "Biomass", "Speicher": "Battery", "Batteriespeicher": "Battery",
+    "Pumpspeicher": "Pumped Hydro",
+    "Kernenergie": "Nuclear", "Kernkraft": "Nuclear", 
+    "Öl": "Oil", "Mineraloelprodukte": "Oil",
+    "Abfall": "Waste"
 }
 
 color_map = {
     "Lignite": "#8B4513", "Hard Coal": "#000000", "Gas": "#FFA500",
     "Wind Onshore": "#00BFFF", "Wind Offshore": "#008B8B", "Nuclear": "#FF0000",
     "Solar": "#FFD700", "Hydro": "#4169E1", "Biomass": "#228B22",
-    "Battery": "#AA00FF", "Pumped Hydro": "#4B0082",
+    "Battery": "#AA00FF", "Pumped Hydro": "#4B0082", "Waste": "#7f8c8d",
     "Household (Low)": "#19D3F3", "Industry (High)": "#FFA15A", 
     "SuedLink (DC)": "#E74C3C", "AC Grid": "#bdc3c7"
 }
@@ -55,7 +58,6 @@ color_map = {
 def download_kraftwerksliste():
     CSV_DOWNLOAD_URL = 'https://www.bundesnetzagentur.de/DE/Fachthemen/ElektrizitaetundGas/Versorgungssicherheit/Erzeugungskapazitaeten/Kraftwerksliste/_DL/Kraftwerksliste_CSV.csv?__blob=publicationFile&v=8'
     try:
-        # Timeout hinzugefügt, um unendliches Hängen zu vermeiden
         r = requests.get(CSV_DOWNLOAD_URL, timeout=10)
         r.raise_for_status()
         with open('./downloaded_kraftwerksliste.csv', 'wb') as f: f.write(r.content)
@@ -63,7 +65,6 @@ def download_kraftwerksliste():
     except: return None
 
 def fetch_entsoe_data(api_key, start, end):
-    """Hilfsfunktion zum Laden von ENTSO-E Daten für einen bestimmten Zeitraum."""
     try:
         client = EntsoePandasClient(api_key=api_key)
         country_code = 'DE'
@@ -113,14 +114,12 @@ def load_live_entsoe_data(api_key):
 
 @st.cache_data(show_spinner=False)
 def load_winter_entsoe_data(api_key):
-    # Fixer Zeitraum im Winter (Mitte Januar)
     start = pd.Timestamp('2024-01-15', tz='Europe/Berlin')
     end = pd.Timestamp('2024-01-18', tz='Europe/Berlin')
     return fetch_entsoe_data(api_key, start, end)
 
 @st.cache_data(show_spinner=False)
 def load_summer_entsoe_data(api_key):
-    # Fixer Zeitraum im Sommer (Mitte Juni)
     start = pd.Timestamp('2024-06-15', tz='Europe/Berlin')
     end = pd.Timestamp('2024-06-18', tz='Europe/Berlin')
     return fetch_entsoe_data(api_key, start, end)
@@ -169,44 +168,65 @@ def build_network(file_path):
 
     if file_path is not None:
         try:
-            df = pd.read_csv(file_path, sep=';', encoding='latin-1', skiprows=13, header=None, engine='python')
-            header_names = [
-                'MaStR-Nr. der Stromerzeugungseinheit', 'Anlagenbetreiber', 'Anzeige-Name der Stromerzeugungseinheit', 
-                'PLZ der Einheit', 'Ort der Einheit', 'Straße der Einheit', 'Hausnummer der Einheit',
-                'Bundesland der Einheit', 'Datum der erstmaligen Inbetriebnahme der Einheit',
-                'Jahr der Inbetriebnahme der Einheit', 'Kraftwerksstatus der Einheit', 'Energieträger', 
-                'Hauptbrennstoff', 'Speichertechnologie', 'Auswertung Energieträger', 'Wärmeauskopplung (KWK)\n(ja/nein)',
-                'Ist die Stromerzeugungseinheit ein Bestandteil eines Grenzkraftwerkes?', 'Bruttoleistung in MW', 
-                'Nettonennleistung (elektrische Wirkleistung) in MW', 'Ist die Stromerzeugungseinheit ein Bestandteil eines Grenzkraftwerkes?: ja\nNettonennleistung der Einspeisung in ein deutsches Netz:',
-                'Technologie der Stromerzeugung', 'Volleinspeisung oder Teileinspeisung?', 'Anschlussnetzbetreiber', 'Spannungsebene'
-            ]
-            df.columns = header_names
-            clean_df = df.copy()
-            p_col = 'Nettonennleistung (elektrische Wirkleistung) in MW'
-            clean_df[p_col] = clean_df[p_col].apply(clean_german_num)
+            header_idx = 0
+            with open(file_path, 'r', encoding='latin-1') as f:
+                for i, line in enumerate(f):
+                    if 'Anlagenbetreiber' in line and 'Bundesland' in line:
+                        header_idx = i
+                        break
             
-            mask_ps = clean_df['Energieträger'].str.contains('Speicher', case=False, na=False)
-            clean_df.loc[mask_ps, 'Energieträger'] = 'Pumpspeicher'
+            df = pd.read_csv(file_path, sep=';', encoding='latin-1', skiprows=header_idx, engine='python', on_bad_lines='skip')
+            
+            col_bland = next((c for c in df.columns if 'Bundesland' in c), None)
+            col_energie = next((c for c in df.columns if 'Energietraeger' in c or 'Energieträger' in c), None)
+            p_col = next((c for c in df.columns if 'Nettonennleistung' in c and 'MW' in c), None)
+            
+            if not all([col_bland, col_energie, p_col]):
+                raise ValueError("Critical columns could not be found in the dataset.")
 
-            exclude_carriers = ['andere Gase', 'nicht biogener Abfall', 'Grubengas', 'Druck aus Gasleitungen', 'Waerme', 'Wärme', 'Geothermie', 'Klaerschlamm', 'Klärschlamm', 'Druck aus Wasserleitungen', 'Wasserstoff', 'Mineraloelprodukte', 'Mineralölprodukte']
-            filtered_df = clean_df[~clean_df['Energieträger'].isin(exclude_carriers)].copy()
+            clean_df = df.copy()
+            clean_df[p_col] = clean_df[p_col].apply(clean_german_num)
+            clean_df[col_energie] = clean_df[col_energie].astype(str)
+            
+            if not clean_df[col_energie].str.contains('Pumpspeicher', case=False).any():
+                mask_ps = clean_df[col_energie].str.contains('Speicher', case=False, na=False)
+                clean_df.loc[mask_ps, col_energie] = 'Pumpspeicher'
+
+            exclude_carriers = ['andere Gase', 'nicht biogener Abfall', 'Grubengas', 'Druck aus Gasleitungen', 'Waerme', 'Wärme', 'Geothermie', 'Klaerschlamm', 'Klärschlamm', 'Druck aus Wasserleitungen', 'Wasserstoff', 'Sonstige Energietraeger (nicht erneuerbar)']
+            filtered_df = clean_df[~clean_df[col_energie].isin(exclude_carriers)].copy()
 
             bundesland_to_bus = {
-                'Schleswig-Holstein': 'Hamburg', 'Hamburg': 'Hamburg', 'Bremen': 'Bremen', 'Niedersachsen': 'Hannover',
-                'Nordrhein-Westfalen': 'Köln', 'Hessen': 'Frankfurt', 'Rheinland-Pfalz': 'Ludwigshafen', 'Saarland': 'Ludwigshafen',
-                'Baden-Württemberg': 'Stuttgart', 'Bayern': 'München', 'Berlin': 'Berlin', 'Brandenburg': 'Berlin',
-                'Mecklenburg-Vorpommern': 'Rostock', 'Sachsen': 'Dresden', 'Sachsen-Anhalt': 'Magdeburg', 'Thüringen': 'Leipzig'
+                'Schleswig-Holstein': 'Hamburg', 'SchleswigHolstein': 'Hamburg',
+                'Hamburg': 'Hamburg', 
+                'Bremen': 'Bremen', 
+                'Niedersachsen': 'Hannover',
+                'Nordrhein-Westfalen': 'Köln', 'NordrheinWestfalen': 'Köln',
+                'Hessen': 'Frankfurt', 
+                'Rheinland-Pfalz': 'Ludwigshafen', 'RheinlandPfalz': 'Ludwigshafen',
+                'Saarland': 'Ludwigshafen',
+                'Baden-Württemberg': 'Stuttgart', 'BadenWuerttemberg': 'Stuttgart',
+                'Bayern': 'München', 
+                'Berlin': 'Berlin', 
+                'Brandenburg': 'Berlin',
+                'Mecklenburg-Vorpommern': 'Rostock', 'MecklenburgVorpommern': 'Rostock',
+                'Sachsen': 'Dresden', 
+                'Sachsen-Anhalt': 'Magdeburg', 'SachsenAnhalt': 'Magdeburg',
+                'Thüringen': 'Leipzig', 'Thueringen': 'Leipzig',
+                'Nordsee': 'Bremen', 'Ostsee': 'Rostock'
             }
 
-            state_mix = filtered_df.groupby(['Bundesland der Einheit', 'Energieträger'])[p_col].sum().reset_index()
+            state_mix = filtered_df.groupby([col_bland, col_energie])[p_col].sum().reset_index()
             
             for _, row in state_mix.iterrows():
-                target_bus = bundesland_to_bus.get(row['Bundesland der Einheit'])
+                bland = row[col_bland]
+                if pd.isna(bland): continue
+                
+                target_bus = bundesland_to_bus.get(bland)
                 leistung = row[p_col]
-                carrier = row['Energieträger']
+                carrier = row[col_energie]
                 
                 if target_bus in nodes and leistung > 0:
-                    n.add("Generator", name=f"Gen_{row['Bundesland der Einheit']}_{carrier}", bus=target_bus, p_nom=leistung, carrier=carrier)
+                    n.add("Generator", name=f"Gen_{bland}_{carrier}", bus=target_bus, p_nom=leistung, carrier=carrier)
                     
         except Exception as e: 
             error_msg = f"CSV Parsing Error: {str(e)}"
@@ -221,13 +241,13 @@ kraftwerks_file = download_kraftwerksliste()
 network, nodes_dict, hh_profile_base, ind_profile_base, csv_error = build_network(kraftwerks_file)
 
 if csv_error:
-    st.error(f"❌ {csv_error}. Check the structure of the downloaded file.")
+    st.error(f"❌ {csv_error}")
 
-# Laden aller drei Datensätze
 df_entsoe_live = load_live_entsoe_data(API_KEY)
 df_entsoe_winter = load_winter_entsoe_data(API_KEY)
 df_entsoe_summer = load_summer_entsoe_data(API_KEY)
-st.success("✅ Network and all ENTSO-E datasets (Live, Winter, Summer) loaded!")
+if not csv_error:
+    st.success("✅ Network and all ENTSO-E datasets (Live, Winter, Summer) loaded!")
 
 # ==========================================
 # 6. REUSABLE SIMULATION UI FUNCTION
@@ -236,18 +256,16 @@ def render_simulation_tab(df_source, tab_desc, prefix_key):
     st.subheader(f"🎛️ Custom Energy Transition Simulation ({tab_desc})")
     
     if df_source.empty or 'Actual Load' not in df_source.columns:
-        st.warning(f"Keine Daten für diesen Zeitraum ({tab_desc}) verfügbar. Bitte API Key oder Zeitraum prüfen.")
+        st.warning(f"No data available for this period ({tab_desc}). Please check your API Key or timeframe.")
         return
 
     st.markdown("Determine the exact absolute storage capacities required to balance the historical residual load curve.")
     
-    # Row 1: Generation Multipliers
     col1, col2, col3 = st.columns(3)
     with col1: scale_wind = st.slider("🌬️ Wind Power (Factor)", 0.0, 3.0, 1.0, 0.1, key=f"{prefix_key}_wind")
     with col2: scale_solar = st.slider("☀️ Solar Power (Factor)", 0.0, 3.0, 1.0, 0.1, key=f"{prefix_key}_solar")
     with col3: scale_fossil = st.slider("🏭 Fossil Fuels (Factor)", 0.0, 2.0, 1.0, 0.1, key=f"{prefix_key}_fossil")
     
-    # Row 2: Storage Capacities
     col4, col5 = st.columns(2)
     with col4: max_pumped_mw = st.slider("💧 Total Target Pumped Hydro (MW)", 0, 30000, 9500, 500, key=f"{prefix_key}_pumped")
     with col5: max_battery_mw = st.slider("🔋 Total Target Battery (MW)", 0, 50000, 5000, 500, key=f"{prefix_key}_batt")
@@ -277,7 +295,6 @@ def render_simulation_tab(df_source, tab_desc, prefix_key):
     
     fig_sim.update_layout(template='plotly_dark', hovermode='x unified', height=550, yaxis_title="Power (MW)", xaxis_title="Time (UTC)")
     
-    # plotly_chart Update auf width='stretch'
     st.plotly_chart(fig_sim, width='stretch')
     
     st.markdown("### 📊 Storage Adequacy Check")
@@ -334,7 +351,6 @@ with tab1:
 
             fig_entsoe.update_layout(template='plotly_dark', hovermode='x unified', xaxis_title="Time (UTC)", yaxis_title="Power (MW)", height=600)
             
-            # plotly_chart Update auf width='stretch'
             st.plotly_chart(fig_entsoe, width='stretch')
 
 # ----------------- TAB 2: SECTORAL BALANCE -----------------
@@ -358,7 +374,6 @@ with tab2:
     fig_balance.add_trace(go.Bar(x=balance_df['Node'], y=balance_df['Generation_Capacity_MW'], name='Generation Capacity', marker_color='#00CC96'))
     fig_balance.update_layout(barmode='group', template='plotly_dark', yaxis_title="Megawatts (MW)", xaxis_title="Region (Node)")
     
-    # plotly_chart Update auf width='stretch'
     st.plotly_chart(fig_balance, width='stretch')
 
 # ----------------- TAB 3: INFRASTRUCTURE DASHBOARD -----------------
@@ -400,24 +415,20 @@ with tab3:
         trace.update(name=name, legendgroup=group, legendgrouptitle_text=f"<b>{group}</b>" if is_first else None, showlegend=is_first)
         fig_dash.add_trace(trace, row=row, col=col)
 
-    # 1. Grid Lines
     for i_line, line_data in network.lines.iterrows():
         b0_data, b1_data = network.buses.loc[line_data.bus0], network.buses.loc[line_data.bus1]
-        add_to_fig(go.Scattergeo(lon=[b0_data.x, b1_data.x], lat=[b0_data.y, b1_data.y], mode='lines', line=dict(width=1, color=color_map["AC Grid"]), opacity=0.3), 1, 1, "AC Grid", "Infrastructure")
+        add_to_fig(go.Scattergeo(lon=[b0_data.x, b1_data.x], lat=[b0_data.y, b1_data.y], mode='lines', line=dict(width=1, color=color_map.get("AC Grid", "gray")), opacity=0.3), 1, 1, "AC Grid", "Infrastructure")
 
-    # 2. SuedLink
-    add_to_fig(go.Scattergeo(lon=[7.5, nodes_dict["Ulm"][0]], lat=[55.0, nodes_dict["Ulm"][1]], mode='lines', line=dict(width=3, color=color_map["SuedLink (DC)"], dash='dash')), 1, 1, "SuedLink (DC)", "Infrastructure")
+    add_to_fig(go.Scattergeo(lon=[7.5, nodes_dict["Ulm"][0]], lat=[55.0, nodes_dict["Ulm"][1]], mode='lines', line=dict(width=3, color=color_map.get("SuedLink (DC)", "red"), dash='dash')), 1, 1, "SuedLink (DC)", "Infrastructure")
 
-    # 3. Wind Offshore Hub
-    offshore_gen = filtered_gens[filtered_gens.carrier == 'Windenergie (Offshore-Anlage)'].p_nom.sum()
+    offshore_gen = filtered_gens[filtered_gens.carrier.isin(['Windenergie (Offshore-Anlage)', 'Wind (offshore)'])].p_nom.sum()
     if offshore_gen > 0:
-        add_to_fig(go.Scattergeo(lon=[7.5], lat=[55.0], mode='markers', marker=dict(size=18, color=color_map["Wind Offshore"], symbol='star'), text=f"<b>Offshore Hub</b><br>Wind Offshore: {offshore_gen:,.0f} MW", hoverinfo='text'), 1, 1, "Wind Offshore", "Generation")
+        add_to_fig(go.Scattergeo(lon=[7.5], lat=[55.0], mode='markers', marker=dict(size=18, color=color_map.get("Wind Offshore", "cyan"), symbol='star'), text=f"<b>Offshore Hub</b><br>Wind Offshore: {offshore_gen:,.0f} MW", hoverinfo='text'), 1, 1, "Wind Offshore", "Generation")
 
-    # 4. Local Generation Bubbles
     radius_val = 24
     for bus_nm, (lon_val, lat_val) in nodes_dict.items():
         bus_gens = filtered_gens[filtered_gens.bus == bus_nm]
-        mix_bus = bus_gens[bus_gens.carrier != 'Windenergie (Offshore-Anlage)'].groupby('carrier').p_nom.sum().sort_values(ascending=False)
+        mix_bus = bus_gens[~bus_gens.carrier.isin(['Windenergie (Offshore-Anlage)', 'Wind (offshore)'])].groupby('carrier').p_nom.sum().sort_values(ascending=False)
         total_bus = mix_bus.sum()
 
         hover_parts = [f"<b>BUS: {bus_nm}</b><br>"]
@@ -445,7 +456,6 @@ with tab3:
             fig_dash.add_trace(go.Scattergeo(lon=[lon_val], lat=[lat_val], mode='markers', marker=dict(size=6, color='gray'), hoverinfo='text', text=hover_text, showlegend=False), row=1, col=1)
         fig_dash.add_trace(go.Scattergeo(lon=[lon_val], lat=[lat_val+0.25], mode='text', text=[bus_nm], textfont=dict(size=11, color='white'), showlegend=False), row=1, col=1)
 
-    # 5. Charts
     all_gen_summary = filtered_gens.groupby('carrier').p_nom.sum()
     if not all_gen_summary.empty:
         fig_dash.add_trace(go.Pie(labels=[translation.get(c,c) for c in all_gen_summary.index], values=all_gen_summary.values, marker=dict(colors=[color_map.get(translation.get(c,c), 'gray') for c in all_gen_summary.index]), hole=0.4, textinfo='percent', showlegend=False, domain={'x': [0.78, 1.0], 'y': [0.65, 0.95]}), row=1, col=2)
@@ -465,7 +475,6 @@ with tab3:
     abs_mx = max(abs(min(values_bar)), max(values_bar)) * 1.6
     fig_dash.update_xaxes(range=[-abs_mx, abs_mx], row=2, col=2)
     
-    # plotly_chart Update auf width='stretch'
     st.plotly_chart(fig_dash, width='stretch')
 
 # ----------------- TAB 4: LIVE SIMULATION -----------------
@@ -475,8 +484,8 @@ with tab4:
 # ----------------- TAB 5: SEASONAL SIMULATION (Static) -----------------
 with tab5:
     season_choice = st.radio(
-        "Wähle die Jahreszeit für die Übung:", 
-        ["❄️ Winter (Dunkelflaute, Jan 2024)", "☀️ Sommer (Viel Solar, Jun 2024)"], 
+        "Choose the season for the exercise:", 
+        ["❄️ Winter (Dunkelflaute / Low Wind & Solar, Jan 2024)", "☀️ Summer (High Solar, Jun 2024)"], 
         horizontal=True
     )
     
