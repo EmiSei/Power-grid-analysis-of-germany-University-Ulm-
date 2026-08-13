@@ -114,14 +114,14 @@ def load_live_entsoe_data(api_key):
 
 @st.cache_data(show_spinner=False)
 def load_winter_entsoe_data(api_key):
-    start = pd.Timestamp('2024-01-15', tz='Europe/Berlin')
-    end = pd.Timestamp('2024-01-18', tz='Europe/Berlin')
+    start = pd.Timestamp('2025-01-15', tz='Europe/Berlin')
+    end = pd.Timestamp('2025-01-18', tz='Europe/Berlin')
     return fetch_entsoe_data(api_key, start, end)
 
 @st.cache_data(show_spinner=False)
 def load_summer_entsoe_data(api_key):
-    start = pd.Timestamp('2024-06-15', tz='Europe/Berlin')
-    end = pd.Timestamp('2024-06-18', tz='Europe/Berlin')
+    start = pd.Timestamp('2025-06-15', tz='Europe/Berlin')
+    end = pd.Timestamp('2025-06-18', tz='Europe/Berlin')
     return fetch_entsoe_data(api_key, start, end)
 
 # ==========================================
@@ -501,14 +501,14 @@ with tab4:
 with tab5:
     season_choice = st.radio(
         "Choose the season for the simulation:", 
-        ["❄️ Winter (Dunkelflaute / Low Wind & Solar, Jan 2024)", "☀️ Summer (High Solar, Jun 2024)"], 
+        ["❄️ Winter (Dunkelflaute / Low Wind & Solar, Jan 2025)", "☀️ Summer (High Solar, Jun 2025)"], 
         horizontal=True
     )
     
     if "Winter" in season_choice:
-        render_simulation_tab(df_entsoe_winter, tab_desc="Winter Data, Jan 15-18 2024", prefix_key="winter")
+        render_simulation_tab(df_entsoe_winter, tab_desc="Winter Data, Jan 15-18 2025", prefix_key="winter")
     else:
-        render_simulation_tab(df_entsoe_summer, tab_desc="Summer Data, Jun 15-18 2024", prefix_key="summer")
+        render_simulation_tab(df_entsoe_summer, tab_desc="Summer Data, Jun 15-18 2025", prefix_key="summer")
         
     st.markdown("<br>", unsafe_allow_html=True)
     st.caption("Source: ENTSO-E")
