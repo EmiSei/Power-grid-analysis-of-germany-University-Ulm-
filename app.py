@@ -1,4 +1,4 @@
-# Project Work for University Ulm: Institue for Energy Conversion and Storage
+# Project Work for University Ulm: Institute for Energy Conversion and Storage
 import os
 import requests
 import pandas as pd
@@ -308,76 +308,15 @@ def render_simulation_tab(df_source, tab_desc, prefix_key):
 # 7. STREAMLIT UI (Tabs)
 # ==========================================
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📊 Filterable Live Data", 
+    "📍 Infrastructure Dashboard",
     "🏭 Sectoral Balance", 
-    "📍 Infrastructure Dashboard", 
+    "📊 Filterable Live Data", 
     "🎛️ Live Simulation", 
-    "❄️/☀️ Seasonal Exercise (Static)"
+    "❄️/☀️ Seasonal Deviations"
 ])
 
-# ----------------- TAB 1: ENTSO-E (Live) -----------------
+# ----------------- TAB 1: INFRASTRUCTURE DASHBOARD -----------------
 with tab1:
-    st.subheader("Analysis: Generation vs. ENTSO-E Actual Demand (Last 3 Days)")
-    
-    if not df_entsoe_live.empty and 'Actual Load' in df_entsoe_live.columns:
-        x_axis = df_entsoe_live.index
-        hours_index = x_axis.hour + x_axis.minute / 60
-        sim_hh = (15000 + 10000 * np.sin(np.pi * (hours_index - 6) / 12) + 4000 * np.cos(np.pi * hours_index / 6)) * 2.5
-        sim_ind = np.full(len(x_axis), 25000 * 1.8)
-        sim_total = sim_hh + sim_ind
-        
-        df_entsoe_live['Demand: Households'] = df_entsoe_live['Actual Load'] * (sim_hh / sim_total)
-        df_entsoe_live['Demand: Industry'] = df_entsoe_live['Actual Load'] * (sim_ind / sim_total)
-
-        available_types = sorted([c for c in df_entsoe_live.columns if c not in ['Actual Load', 'Demand: Households', 'Demand: Industry']])
-        selected_types = st.multiselect(
-            "Select Data to Display (Generation & Demand):",
-            options=available_types + ['Demand: Households', 'Demand: Industry', 'Actual Load'],
-            default=available_types + ['Actual Load']
-        )
-        
-        if selected_types:
-            fig_entsoe = go.Figure()
-            generation_types = [t for t in selected_types if t in available_types]
-            for t in generation_types:
-                fig_entsoe.add_trace(go.Scatter(x=x_axis, y=df_entsoe_live[t], mode='lines', name=t, stackgroup='one', line=dict(width=0.5)))
-
-            if 'Demand: Households' in selected_types:
-                fig_entsoe.add_trace(go.Scatter(x=x_axis, y=df_entsoe_live['Demand: Households'], mode='lines', name='Demand: Households (Scaled)', line=dict(color='#19D3F3', width=2, dash='dot')))
-            if 'Demand: Industry' in selected_types:
-                fig_entsoe.add_trace(go.Scatter(x=x_axis, y=df_entsoe_live['Demand: Industry'], mode='lines', name='Demand: Industry (Scaled)', line=dict(color='#FFA15A', width=2, dash='dash')))
-            if 'Actual Load' in selected_types:
-                fig_entsoe.add_trace(go.Scatter(x=x_axis, y=df_entsoe_live['Actual Load'], mode='lines', name='ENTSO-E TOTAL DEMAND', line=dict(color='white', width=4)))
-
-            fig_entsoe.update_layout(template='plotly_dark', hovermode='x unified', xaxis_title="Time (UTC)", yaxis_title="Power (MW)", height=600)
-            
-            st.plotly_chart(fig_entsoe, width='stretch')
-
-# ----------------- TAB 2: SECTORAL BALANCE -----------------
-with tab2:
-    st.subheader("Sectoral Network Analysis")
-    gen_capacity = network.generators.groupby("bus")['p_nom'].sum().reset_index()
-    gen_capacity.columns = ['Node', 'Generation_Capacity_MW']
-
-    data = []
-    for bus in network.buses.index:
-        try:
-            peak_hh = network.loads_t.p_set[f"Load_HH_{bus}"].max()
-            peak_ind = network.loads_t.p_set[f"Load_IND_{bus}"].max()
-        except: peak_hh, peak_ind = 0, 0
-        data.append({'Node': bus, 'Demand_Household_MW': peak_hh, 'Demand_Industry_MW': peak_ind})
-
-    balance_df = pd.merge(pd.DataFrame(data), gen_capacity, on='Node', how='left').fillna(0)
-    fig_balance = go.Figure()
-    fig_balance.add_trace(go.Bar(x=balance_df['Node'], y=balance_df['Demand_Industry_MW'], name='Max. Demand Industry', marker_color='#FFA15A'))
-    fig_balance.add_trace(go.Bar(x=balance_df['Node'], y=balance_df['Demand_Household_MW'], name='Max. Demand Households', marker_color='#19D3F3'))
-    fig_balance.add_trace(go.Bar(x=balance_df['Node'], y=balance_df['Generation_Capacity_MW'], name='Generation Capacity', marker_color='#00CC96'))
-    fig_balance.update_layout(barmode='group', template='plotly_dark', yaxis_title="Megawatts (MW)", xaxis_title="Region (Node)")
-    
-    st.plotly_chart(fig_balance, width='stretch')
-
-# ----------------- TAB 3: INFRASTRUCTURE DASHBOARD -----------------
-with tab3:
     st.subheader("📍 National Infrastructure & Energy Balance")
     
     all_carriers_raw = network.generators['carrier'].unique()
@@ -476,15 +415,89 @@ with tab3:
     fig_dash.update_xaxes(range=[-abs_mx, abs_mx], row=2, col=2)
     
     st.plotly_chart(fig_dash, width='stretch')
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.caption("Source: Bundesnetzagentur Deutschland")
+
+# ----------------- TAB 2: SECTORAL BALANCE -----------------
+with tab2:
+    st.subheader("Sectoral Network Analysis")
+    gen_capacity = network.generators.groupby("bus")['p_nom'].sum().reset_index()
+    gen_capacity.columns = ['Node', 'Generation_Capacity_MW']
+
+    data = []
+    for bus in network.buses.index:
+        try:
+            peak_hh = network.loads_t.p_set[f"Load_HH_{bus}"].max()
+            peak_ind = network.loads_t.p_set[f"Load_IND_{bus}"].max()
+        except: peak_hh, peak_ind = 0, 0
+        data.append({'Node': bus, 'Demand_Household_MW': peak_hh, 'Demand_Industry_MW': peak_ind})
+
+    balance_df = pd.merge(pd.DataFrame(data), gen_capacity, on='Node', how='left').fillna(0)
+    fig_balance = go.Figure()
+    fig_balance.add_trace(go.Bar(x=balance_df['Node'], y=balance_df['Demand_Industry_MW'], name='Max. Demand Industry', marker_color='#FFA15A'))
+    fig_balance.add_trace(go.Bar(x=balance_df['Node'], y=balance_df['Demand_Household_MW'], name='Max. Demand Households', marker_color='#19D3F3'))
+    fig_balance.add_trace(go.Bar(x=balance_df['Node'], y=balance_df['Generation_Capacity_MW'], name='Generation Capacity', marker_color='#00CC96'))
+    fig_balance.update_layout(barmode='group', template='plotly_dark', yaxis_title="Megawatts (MW)", xaxis_title="Region (Node)")
+    
+    st.plotly_chart(fig_balance, width='stretch')
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.caption("Source: Bundesnetzagentur Deutschland")
+
+
+# ----------------- TAB 3: FILTERABLE LIVE DATA -----------------
+with tab3:
+    st.subheader("Analysis: Generation vs. ENTSO-E Actual Demand (Last 3 Days)")
+    
+    if not df_entsoe_live.empty and 'Actual Load' in df_entsoe_live.columns:
+        x_axis = df_entsoe_live.index
+        hours_index = x_axis.hour + x_axis.minute / 60
+        sim_hh = (15000 + 10000 * np.sin(np.pi * (hours_index - 6) / 12) + 4000 * np.cos(np.pi * hours_index / 6)) * 2.5
+        sim_ind = np.full(len(x_axis), 25000 * 1.8)
+        sim_total = sim_hh + sim_ind
+        
+        df_entsoe_live['Demand: Households'] = df_entsoe_live['Actual Load'] * (sim_hh / sim_total)
+        df_entsoe_live['Demand: Industry'] = df_entsoe_live['Actual Load'] * (sim_ind / sim_total)
+
+        available_types = sorted([c for c in df_entsoe_live.columns if c not in ['Actual Load', 'Demand: Households', 'Demand: Industry']])
+        selected_types = st.multiselect(
+            "Select Data to Display (Generation & Demand):",
+            options=available_types + ['Demand: Households', 'Demand: Industry', 'Actual Load'],
+            default=available_types + ['Actual Load']
+        )
+        
+        if selected_types:
+            fig_entsoe = go.Figure()
+            generation_types = [t for t in selected_types if t in available_types]
+            for t in generation_types:
+                fig_entsoe.add_trace(go.Scatter(x=x_axis, y=df_entsoe_live[t], mode='lines', name=t, stackgroup='one', line=dict(width=0.5)))
+
+            if 'Demand: Households' in selected_types:
+                fig_entsoe.add_trace(go.Scatter(x=x_axis, y=df_entsoe_live['Demand: Households'], mode='lines', name='Demand: Households (Scaled)', line=dict(color='#19D3F3', width=2, dash='dot')))
+            if 'Demand: Industry' in selected_types:
+                fig_entsoe.add_trace(go.Scatter(x=x_axis, y=df_entsoe_live['Demand: Industry'], mode='lines', name='Demand: Industry (Scaled)', line=dict(color='#FFA15A', width=2, dash='dash')))
+            if 'Actual Load' in selected_types:
+                fig_entsoe.add_trace(go.Scatter(x=x_axis, y=df_entsoe_live['Actual Load'], mode='lines', name='ENTSO-E TOTAL DEMAND', line=dict(color='white', width=4)))
+
+            fig_entsoe.update_layout(template='plotly_dark', hovermode='x unified', xaxis_title="Time (UTC)", yaxis_title="Power (MW)", height=600)
+            
+            st.plotly_chart(fig_entsoe, width='stretch')
+            
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.caption("Source: ENTSO-E")
 
 # ----------------- TAB 4: LIVE SIMULATION -----------------
 with tab4:
     render_simulation_tab(df_entsoe_live, tab_desc="Live Data, Last 3 Days", prefix_key="live")
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.caption("Source: ENTSO-E")
 
-# ----------------- TAB 5: SEASONAL SIMULATION (Static) -----------------
+# ----------------- TAB 5: SEASONAL DEVIATIONS -----------------
 with tab5:
     season_choice = st.radio(
-        "Choose the season for the exercise:", 
+        "Choose the season for the simulation:", 
         ["❄️ Winter (Dunkelflaute / Low Wind & Solar, Jan 2024)", "☀️ Summer (High Solar, Jun 2024)"], 
         horizontal=True
     )
@@ -493,3 +506,12 @@ with tab5:
         render_simulation_tab(df_entsoe_winter, tab_desc="Winter Data, Jan 15-18 2024", prefix_key="winter")
     else:
         render_simulation_tab(df_entsoe_summer, tab_desc="Summer Data, Jun 15-18 2024", prefix_key="summer")
+        
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.caption("Source: ENTSO-E")
+
+# ==========================================
+# 8. FOOTER / SIGNATURE
+# ==========================================
+st.markdown("---")
+st.markdown("**Project Work from Emilia Seidel**  \nUniversity of Ulm  \nInstitute for Energy Conversion and Storage")
