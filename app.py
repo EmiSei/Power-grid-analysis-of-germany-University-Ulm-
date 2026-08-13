@@ -267,8 +267,8 @@ def render_simulation_tab(df_source, tab_desc, prefix_key):
     with col3: scale_fossil = st.slider("🏭 Fossil Fuels (Factor)", 0.0, 2.0, 1.0, 0.1, key=f"{prefix_key}_fossil")
     
     col4, col5 = st.columns(2)
-    with col4: max_pumped_mw = st.slider("💧 Total Target Pumped Hydro (MW)", 0, 30000, 9500, 500, key=f"{prefix_key}_pumped")
-    with col5: max_battery_mw = st.slider("🔋 Total Target Battery (MW)", 0, 50000, 5000, 500, key=f"{prefix_key}_batt")
+    with col4: max_pumped_mw = st.slider("💧 Total Target Pumped Hydro (MW)", 0, 30000, 6500, 500, key=f"{prefix_key}_pumped")
+    with col5: max_battery_mw = st.slider("🔋 Total Target Battery (MW)", 0, 60000, 5000, 500, key=f"{prefix_key}_batt")
 
     df_sim = df_source.copy()
     
@@ -300,7 +300,11 @@ def render_simulation_tab(df_source, tab_desc, prefix_key):
     st.markdown("### 📊 Storage Adequacy Check")
     unmet_demand_peak = (df_sim['Residual Load'] - df_sim['Simulated Pumped Hydro'] - df_sim['Simulated Battery Storage']).max()
     if unmet_demand_peak > 0:
-        st.error(f"⚠️ **Grid Deficit:** Peak unbalance detected! Shortage of **{unmet_demand_peak:,.0f} MW**. Increase storage capacities or fossil/RE generation factors.")
+        unmet_demand_gw = unmet_demand_peak / 1000
+        # Formats the GW value with 2 decimals and replaces the dot with a comma
+        unmet_gw_str = f"{unmet_demand_gw:.2f}".replace(".", ",")
+        unmet_mw_str = f"{unmet_demand_peak:,.0f}".replace(",", ".")
+        st.error(f"⚠️ **Grid Deficit:** Peak unbalance detected! Shortage of **{unmet_gw_str} GW** ({unmet_mw_str} MW). Increase storage capacities or fossil/RE generation factors.")
     else:
         st.success("🎉 **Grid Balanced:** The specified absolute storage capacities are completely sufficient to buffer the residual load fluctuations during this period!")
 
@@ -445,7 +449,6 @@ with tab2:
     st.markdown("<br>", unsafe_allow_html=True)
     st.caption("Source: Bundesnetzagentur Deutschland")
 
-
 # ----------------- TAB 3: FILTERABLE LIVE DATA -----------------
 with tab3:
     st.subheader("Analysis: Generation vs. ENTSO-E Actual Demand (Last 3 Days)")
@@ -514,4 +517,4 @@ with tab5:
 # 8. FOOTER / SIGNATURE
 # ==========================================
 st.markdown("---")
-st.markdown("**Project Work from Emilia Seidel**  \nUniversity of Ulm  \nInstitute for Energy Conversion and Storage")
+st.markdown("**Project Work from Emilia Seidel**<br>University of Ulm<br>Institute for Energy Conversion and Storage", unsafe_allow_html=True)
