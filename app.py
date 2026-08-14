@@ -261,53 +261,70 @@ def render_simulation_tab(df_source, tab_desc, prefix_key):
 
     st.markdown("Determine the exact absolute storage capacities required to balance the historical residual load curve.")
     
+    # 1. Slider für Skalierungsfaktoren
     col1, col2, col3 = st.columns(3)
     with col1: scale_wind = st.slider("🌬️ Wind Power (Factor)", 0.0, 3.0, 1.0, 0.1, key=f"{prefix_key}_wind")
     with col2: scale_solar = st.slider("☀️ Solar Power (Factor)", 0.0, 3.0, 1.0, 0.1, key=f"{prefix_key}_solar")
     with col3: scale_fossil = st.slider("🏭 Fossil Fuels (Factor)", 0.0, 2.0, 1.0, 0.1, key=f"{prefix_key}_fossil")
     
+    # 2. Slider für Speicherkapazitäten
     col4, col5 = st.columns(2)
-    with col4: max_pumped_mw = st.slider("💧 Total Target Pumped Hydro (MW)", 0, 30000, 6500, 500, key=f"{prefix_key}_pumped")
+    with col4: max_pumped_mw = st.slider("💧 Total Target Pumped Hydro (MW)", 0, 30000, 9500, 500, key=f"{prefix_key}_pumped")
     with col5: max_battery_mw = st.slider("🔋 Total Target Battery (MW)", 0, 60000, 5000, 500, key=f"{prefix_key}_batt")
 
     df_sim = df_source.copy()
     
+    # 3. Faktoren auf die Daten anwenden
     if 'Wind' in df_sim.columns: df_sim['Wind'] *= scale_wind
     if 'Solar' in df_sim.columns: df_sim['Solar'] *= scale_solar
-    for col in ['Hard Coal', 'Brown Coal', 'Natural Gas', 'Oil']:
+    
+    fossil_cols = ['Hard Coal', 'Brown Coal', 'Natural Gas', 'Oil']
+    for col in fossil_cols:
         if col in df_sim.columns: df_sim[col] *= scale_fossil
         
+    # 4. Berechnung von Erneuerbaren und Fossilen
     re_cols = [c for c in ['Wind', 'Solar', 'Hydro', 'Biomass'] if c in df_sim.columns]
-    df_sim['Total Renewable Gen'] = df_sim[re_cols].sum(axis=1)
-    df_sim['Residual Load'] = df_sim['Actual Load'] - df_sim['Total Renewable Gen']
+    active_fossil_cols = [c for c in fossil_cols if c in df_sim.columns]
     
+    df_sim['Total Renewable Gen'] = df_sim[re_cols].sum(axis=1)
+    df_sim['Total Fossil Gen'] = df_sim[active_fossil_cols].sum(axis=1)
+    
+    # 5. NEU: Residuallast berechnet sich nach Abzug von Erneuerbaren UND Fossilen
+    df_sim['Residual Load'] = df_sim['Actual Load'] - (df_sim['Total Renewable Gen'] + df_sim['Total Fossil Gen'])
+    
+    # 6. Speicherlogik (Dispatch)
     df_sim['Simulated Pumped Hydro'] = df_sim['Residual Load'].apply(lambda x: min(max_pumped_mw, max(0, x)) if x > 0 else max(-max_pumped_mw, x))
     df_sim['Simulated Battery Storage'] = (df_sim['Residual Load'] - df_sim['Simulated Pumped Hydro']).apply(lambda x: min(max_battery_mw, max(0, x)) if x > 0 else max(-max_battery_mw, x))
 
+    # 7. Visualisierung mit Plotly
     fig_sim = go.Figure()
     
-    for col in [c for c in df_sim.columns if c not in ['Actual Load', 'Demand: Households', 'Demand: Industry', 'Total Renewable Gen', 'Residual Load', 'Simulated Pumped Hydro', 'Simulated Battery Storage', 'Pumped Storage', 'Battery']]:
+    # Hilfsspalten von der Flächendarstellung ausschließen
+    exclude_from_plot = ['Actual Load', 'Demand: Households', 'Demand: Industry', 'Total Renewable Gen', 'Total Fossil Gen', 'Residual Load', 'Simulated Pumped Hydro', 'Simulated Battery Storage', 'Pumped Storage', 'Battery']
+    
+    for col in [c for c in df_sim.columns if c not in exclude_from_plot]:
         fig_sim.add_trace(go.Scatter(x=df_sim.index, y=df_sim[col], mode='lines', stackgroup='one', name=col))
         
-    fig_sim.add_trace(go.Scatter(x=df_sim.index, y=df_sim['Simulated Pumped Hydro'], mode='lines', name='Dispatched Pumped Hydro (Sim)', line=dict(color=color_map["Pumped Hydro"], width=2, dash='dash')))
-    fig_sim.add_trace(go.Scatter(x=df_sim.index, y=df_sim['Simulated Battery Storage'], mode='lines', name='Dispatched Battery Storage (Sim)', line=dict(color=color_map["Battery"], width=2, dash='dot')))
+    fig_sim.add_trace(go.Scatter(x=df_sim.index, y=df_sim['Simulated Pumped Hydro'], mode='lines', name='Dispatched Pumped Hydro (Sim)', line=dict(color=color_map.get("Pumped Hydro", "#4B0082"), width=2, dash='dash')))
+    fig_sim.add_trace(go.Scatter(x=df_sim.index, y=df_sim['Simulated Battery Storage'], mode='lines', name='Dispatched Battery Storage (Sim)', line=dict(color=color_map.get("Battery", "#AA00FF"), width=2, dash='dot')))
     fig_sim.add_trace(go.Scatter(x=df_sim.index, y=df_sim['Actual Load'], mode='lines', name='ENTSO-E TOTAL DEMAND', line=dict(color='white', width=4)))
     
     fig_sim.update_layout(template='plotly_dark', hovermode='x unified', height=550, yaxis_title="Power (MW)", xaxis_title="Time (UTC)")
     
     st.plotly_chart(fig_sim, width='stretch')
     
+    # 8. Storage Adequacy Check (Versorgungssicherheit)
     st.markdown("### 📊 Storage Adequacy Check")
     unmet_demand_peak = (df_sim['Residual Load'] - df_sim['Simulated Pumped Hydro'] - df_sim['Simulated Battery Storage']).max()
+    
     if unmet_demand_peak > 0:
         unmet_demand_gw = unmet_demand_peak / 1000
-        # Formats the GW value with 2 decimals and replaces the dot with a comma
+        # Formatierung für deutsche Kommasetzung
         unmet_gw_str = f"{unmet_demand_gw:.2f}".replace(".", ",")
         unmet_mw_str = f"{unmet_demand_peak:,.0f}".replace(",", ".")
         st.error(f"⚠️ **Grid Deficit:** Peak unbalance detected! Shortage of **{unmet_gw_str} GW** ({unmet_mw_str} MW). Increase storage capacities or fossil/RE generation factors.")
     else:
         st.success("🎉 **Grid Balanced:** The specified absolute storage capacities are completely sufficient to buffer the residual load fluctuations during this period!")
-
 # ==========================================
 # 7. STREAMLIT UI (Tabs)
 # ==========================================
