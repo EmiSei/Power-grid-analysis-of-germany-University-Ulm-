@@ -267,7 +267,7 @@ def render_simulation_tab(df_source, tab_desc, prefix_key):
     with col3: scale_fossil = st.slider("🏭 Fossil Fuels (Factor)", 0.0, 2.0, 1.0, 0.1, key=f"{prefix_key}_fossil")
     
     col4, col5 = st.columns(2)
-    with col4: max_pumped_mw = st.slider("💧 Total Target Pumped Hydro (MW)", 0, 30000, 9500, 500, key=f"{prefix_key}_pumped")
+    with col4: max_pumped_mw = st.slider("💧 Total Target Pumped Hydro (MW)", 0, 30000, 6500, 500, key=f"{prefix_key}_pumped")
     with col5: max_battery_mw = st.slider("🔋 Total Target Battery (MW)", 0, 60000, 5000, 500, key=f"{prefix_key}_batt")
 
     df_sim = df_source.copy()
